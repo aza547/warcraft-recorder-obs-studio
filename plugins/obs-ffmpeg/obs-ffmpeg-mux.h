@@ -49,14 +49,8 @@ struct ffmpeg_muxer {
 		REPLAY_TO_REC_SAVING_REPLAY,
 		REPLAY_TO_REC_CONTINUOUS
 	} replay_to_rec_state;
-	
-	/* timestamp offsets for continuous recording */
-	int64_t video_offset;
-	int64_t video_pts_offset_stored;
-	int64_t audio_offsets[MAX_AUDIO_MIXES];
-	int64_t audio_dts_offsets_stored[MAX_AUDIO_MIXES];
 
-	/* split file */
+	/* handy variables for timestamp adjustments */
 	bool found_video;
 	bool found_audio[MAX_AUDIO_MIXES];
 	int64_t video_pts_offset;

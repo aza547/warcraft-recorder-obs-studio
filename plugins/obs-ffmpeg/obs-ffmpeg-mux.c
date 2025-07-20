@@ -1180,17 +1180,34 @@ static void replay_to_recording_save_with_offset(struct ffmpeg_muxer *stream, in
 		int64_t target_time = (int64_t)offset_seconds * 1000000LL;
     info("target time %lld usec", target_time);
 		
-		// Find the starting packet index
+		// Find the nearest keyframe (search both forward and backward)
+		size_t best_keyframe_idx = 0;
+		int64_t best_time_diff = INT64_MAX;
+		bool found_keyframe = false;
+		
 		for (size_t i = 0; i < num_packets; i++) {
 			struct encoder_packet *pkt = deque_data(&stream->packets, i * size);
-      const char *type_str = (pkt->type == OBS_ENCODER_VIDEO) ? "video" : "audio";
-      info("Checking packet %zu: Type: %s Keyframe: %d DTS: %ld", i, type_str, pkt->keyframe, pkt->dts_usec);
+			const char *type_str = (pkt->type == OBS_ENCODER_VIDEO) ? "video" : "audio";
+			info("Checking packet %zu: Type: %s Keyframe: %d DTS: %ld", i, type_str, pkt->keyframe, pkt->dts_usec);
 
-      if ((int64_t)pkt->dts_usec >= target_time && pkt->type == OBS_ENCODER_VIDEO && pkt->keyframe) {
-				skip_packets = i;
-        info("Skipping %zu packets to start from offset %d seconds", skip_packets, offset_seconds);
-				break;
+			if (pkt->type == OBS_ENCODER_VIDEO && pkt->keyframe) {
+				int64_t time_diff = llabs((int64_t)pkt->dts_usec - target_time);
+				if (time_diff < best_time_diff) {
+					best_time_diff = time_diff;
+					best_keyframe_idx = i;
+					found_keyframe = true;
+					info("Found better keyframe at packet %zu: time_diff=%lld usec", i, time_diff);
+				}
 			}
+		}
+		
+		if (found_keyframe) {
+			skip_packets = best_keyframe_idx;
+			struct encoder_packet *best_pkt = deque_data(&stream->packets, best_keyframe_idx * size);
+			info("Selected nearest keyframe at packet %zu: DTS=%ld, time_diff=%lld usec", 
+				 best_keyframe_idx, best_pkt->dts_usec, best_time_diff);
+		} else {
+			info("No keyframes found, starting from beginning");
 		}
 	}
 	
@@ -1222,9 +1239,8 @@ static void replay_to_recording_save_with_offset(struct ffmpeg_muxer *stream, in
 				video_pts_offset = pkt->pts;
 				video_offset = video_pts_offset * 1000000 / pkt->timebase_den;
         
-				// STORE for continuous recording timestamp adjustment
-				stream->video_offset = video_offset;
-				stream->video_pts_offset_stored = video_pts_offset;
+				// STORE for continuous recording timestamp adjustment (reuse existing split file fields)
+				stream->video_pts_offset = video_pts_offset;
         
         info("Calculated video offset: %ld usec", video_offset);
 			}
@@ -1234,9 +1250,8 @@ static void replay_to_recording_save_with_offset(struct ffmpeg_muxer *stream, in
 				audio_offsets[pkt->track_idx] = pkt->dts_usec;
 				audio_dts_offsets[pkt->track_idx] = pkt->dts;
         
-				// STORE for continuous recording timestamp adjustment
-				stream->audio_offsets[pkt->track_idx] = audio_offsets[pkt->track_idx];
-				stream->audio_dts_offsets_stored[pkt->track_idx] = audio_dts_offsets[pkt->track_idx];
+				// STORE for continuous recording timestamp adjustment (reuse existing split file fields)
+				stream->audio_dts_offsets[pkt->track_idx] = audio_dts_offsets[pkt->track_idx];
         
         info("Calculated audio offset for track %d: %ld usec", pkt->track_idx, audio_offsets[pkt->track_idx]);
 			}
@@ -1309,13 +1324,14 @@ static void *replay_to_recording_mux_thread(void *data)
 		
 		// Apply timestamp adjustments to buffered packets too
 		if (pkt.type == OBS_ENCODER_VIDEO) {
-			pkt.dts_usec -= stream->video_offset;
-			pkt.dts -= stream->video_pts_offset_stored;
-			pkt.pts -= stream->video_pts_offset_stored;
+			int64_t video_offset = stream->video_pts_offset * 1000000 / pkt.timebase_den;
+			pkt.dts_usec -= video_offset;
+			pkt.dts -= stream->video_pts_offset;
+			pkt.pts -= stream->video_pts_offset;
 		} else {
-			pkt.dts_usec -= stream->audio_offsets[pkt.track_idx];
-			pkt.dts -= stream->audio_dts_offsets_stored[pkt.track_idx];
-			pkt.pts -= stream->audio_dts_offsets_stored[pkt.track_idx];
+			pkt.dts_usec -= stream->audio_dts_offsets[pkt.track_idx];
+			pkt.dts -= stream->audio_dts_offsets[pkt.track_idx];
+			pkt.pts -= stream->audio_dts_offsets[pkt.track_idx];
 		}
 		
 		if (!write_packet(stream, &pkt)) {
@@ -1560,15 +1576,16 @@ static void replay_to_recording_data(void *data, struct encoder_packet *packet)
     // Apply the same timestamp adjustments that were used in the replay portion
     if (adjusted_pkt.type == OBS_ENCODER_VIDEO) {
         // Use the video offset calculated during replay save
-        adjusted_pkt.dts_usec -= stream->video_offset;
-        adjusted_pkt.dts -= stream->video_pts_offset_stored;
-        adjusted_pkt.pts -= stream->video_pts_offset_stored;
+        int64_t video_offset = stream->video_pts_offset * 1000000 / adjusted_pkt.timebase_den;
+        adjusted_pkt.dts_usec -= video_offset;
+        adjusted_pkt.dts -= stream->video_pts_offset;
+        adjusted_pkt.pts -= stream->video_pts_offset;
         info("Adjusted video packet: original_dts=%ld, adjusted_dts=%ld", packet->dts_usec, adjusted_pkt.dts_usec);
     } else {
         // Use the audio offset for this track
-        adjusted_pkt.dts_usec -= stream->audio_offsets[adjusted_pkt.track_idx];
-        adjusted_pkt.dts -= stream->audio_dts_offsets_stored[adjusted_pkt.track_idx];
-        adjusted_pkt.pts -= stream->audio_dts_offsets_stored[adjusted_pkt.track_idx];
+        adjusted_pkt.dts_usec -= stream->audio_dts_offsets[adjusted_pkt.track_idx];
+        adjusted_pkt.dts -= stream->audio_dts_offsets[adjusted_pkt.track_idx];
+        adjusted_pkt.pts -= stream->audio_dts_offsets[adjusted_pkt.track_idx];
     }
 
     if (!write_packet(stream, &adjusted_pkt)) {
