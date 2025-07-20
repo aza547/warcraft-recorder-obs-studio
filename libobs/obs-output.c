@@ -437,7 +437,6 @@ static inline void signal_stop(struct obs_output *output);
 
 void obs_output_actual_stop(obs_output_t *output, bool force, uint64_t ts)
 {
-  blog(LOG_INFO, "AHK3 Actual stop");
 	bool call_stop = true;
 	bool was_reconnecting = false;
 
@@ -470,14 +469,10 @@ void obs_output_actual_stop(obs_output_t *output, bool force, uint64_t ts)
 		call_stop = true;
 	}
 
-  blog(LOG_INFO, "AHK3.1 Call stop? %d", call_stop);
-
 	if (output->context.data && call_stop) {
-    blog(LOG_INFO, "AHK3.2");
 		output->info.stop(output->context.data, ts);
 
 	} else if (was_reconnecting) {
-    blog(LOG_INFO, "AHK3.3");
 		output->stop_code = OBS_OUTPUT_SUCCESS;
 		signal_stop(output);
 		os_event_signal(output->stopping_event);
@@ -496,12 +491,10 @@ void obs_output_actual_stop(obs_output_t *output, bool force, uint64_t ts)
 	}
 
 	da_clear(output->keyframe_group_tracking);
-  blog(LOG_INFO, "AHK4 Exit Actual stop");
 }
 
 void obs_output_stop(obs_output_t *output)
 {
-  blog(LOG_INFO, "AHK1 Enter Stop");
 	if (!obs_output_valid(output, "obs_output_stop"))
 		return;
 	if (!output->context.data)
@@ -516,7 +509,6 @@ void obs_output_stop(obs_output_t *output)
 	if (flag_encoded(output) && output->active_delay_ns) {
 		obs_output_delay_stop(output);
 	} else if (!stopping(output)) {
-    blog(LOG_INFO, "AHK2 Stopping");
 		do_output_signal(output, "stopping");
 		obs_output_actual_stop(output, false, os_gettime_ns());
 	}
