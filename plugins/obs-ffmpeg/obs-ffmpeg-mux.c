@@ -1177,21 +1177,18 @@ static void replay_to_recording_save_with_offset(struct ffmpeg_muxer *stream, in
 	// Calculate how many packets to skip based on offset
 	size_t skip_packets = 0;
 	if (offset_seconds > 0) {
-		int64_t offset_usec = (int64_t)offset_seconds * 1000000LL;
-		int64_t target_time = 0;
-		
-		// Ensure we don't underflow
-		if (stream->cur_time > offset_usec) {
-			target_time = stream->cur_time - offset_usec;
-		} else {
-			target_time = 0;
-		}
+		int64_t target_time = (int64_t)offset_seconds * 1000000LL;
+    info("target time %lld usec", target_time);
 		
 		// Find the starting packet index
 		for (size_t i = 0; i < num_packets; i++) {
 			struct encoder_packet *pkt = deque_data(&stream->packets, i * size);
-			if ((int64_t)pkt->dts_usec >= target_time) {
+      const char *type_str = (pkt->type == OBS_ENCODER_VIDEO) ? "video" : "audio";
+      info("Checking packet %zu: Type: %s Keyframe: %d DTS: %ld", i, type_str, pkt->keyframe, pkt->dts_usec);
+
+      if ((int64_t)pkt->dts_usec >= target_time && pkt->type == OBS_ENCODER_VIDEO && pkt->keyframe) {
 				skip_packets = i;
+        info("Skipping %zu packets to start from offset %d seconds", skip_packets, offset_seconds);
 				break;
 			}
 		}
@@ -1202,12 +1199,12 @@ static void replay_to_recording_save_with_offset(struct ffmpeg_muxer *stream, in
 		warn("Offset too large, no packets to save");
 		return;
 	}
+  info("packets_to_save %zu", packets_to_save);
 	
 	da_reserve(stream->mux_packets, packets_to_save);
 
-	/* ---------------------------- */
-	/* reorder packets starting from offset */
-
+  /* ---------------------------- */
+	/* reorder packets */
 	bool found_video = false;
 	bool found_audio[MAX_AUDIO_MIXES] = {0};
 	int64_t video_offset = 0;
@@ -1221,23 +1218,29 @@ static void replay_to_recording_save_with_offset(struct ffmpeg_muxer *stream, in
 
 		if (pkt->type == OBS_ENCODER_VIDEO) {
 			if (!found_video) {
-				video_pts_offset = pkt->pts;
+        found_video = true;
+				video_pts_offset = video_pts_offset = pkt->pts;
 				video_offset = video_pts_offset * 1000000 / pkt->timebase_den;
-				found_video = true;
+        info("Calculated video offset: %ld usec", video_offset);
 			}
 		} else {
 			if (!found_audio[pkt->track_idx]) {
 				found_audio[pkt->track_idx] = true;
 				audio_offsets[pkt->track_idx] = pkt->dts_usec;
 				audio_dts_offsets[pkt->track_idx] = pkt->dts;
+        info("Calculated audio offset for track %d: %ld usec", pkt->track_idx, audio_offsets[pkt->track_idx]);
 			}
 		}
+
+    if (pkt->type == OBS_ENCODER_VIDEO) {
+      info("Inserting packet %zu: Type: %s Keyframe: %d DTS: %ld", i, "video", pkt->keyframe, pkt->dts_usec);
+    }
 
 		insert_packet(&stream->mux_packets, pkt, video_offset, audio_offsets, video_pts_offset,
 			      audio_dts_offsets);
 	}
 
-	generate_filename(stream, &stream->path, true);
+    generate_filename(stream, &stream->path, true);
 
 	// Set state for replay-to-recording transition
   info("state set to REPLAY_TO_REC_SAVING_REPLAY");
@@ -1283,10 +1286,6 @@ static void *replay_to_recording_mux_thread(void *data)
 	}
 
 	info("Wrote replay portion to '%s', transitioning to continuous recording", stream->path.array);
-  info("emit saved");
-  calldata_t cd = {0};
-  signal_handler_t *sh = obs_output_get_signal_handler(stream->output);
-  signal_handler_signal(sh, "saved", &cd);
 
 	// Transition to continuous recording
 	stream->replay_to_rec_state = REPLAY_TO_REC_CONTINUOUS;
@@ -1600,10 +1599,13 @@ static void save_replay_to_recording_proc(void *data, calldata_t *cd)
 	UNUSED_PARAMETER(cd);
 }
 
-static void set_replay_offset_proc(void *data, calldata_t *cd)
+static void save_replay_to_recording_with_offset_proc(void *data, calldata_t *cd)
 {
-	struct ffmpeg_muxer *stream = data;
-	stream->replay_start_offset_sec = (int)calldata_int(cd, "offset_seconds");
+  struct ffmpeg_muxer *stream = data;
+  int offset_seconds = (int)calldata_int(cd, "offset_seconds");
+  stream->replay_start_offset_sec = offset_seconds;
+  info("Got offset_seconds: %d", offset_seconds);
+  save_replay_to_recording_proc(data, cd);
 }
 
 // static void set_continuous_duration_proc(void *data, calldata_t *cd)
@@ -1627,7 +1629,7 @@ static void *replay_to_recording_create(obs_data_t *settings, obs_output_t *outp
 
 	proc_handler_t *ph = obs_output_get_proc_handler(output);
 	proc_handler_add(ph, "void save()", save_replay_to_recording_proc, stream);
-	proc_handler_add(ph, "void save_with_offset(int offset_seconds)", set_replay_offset_proc, stream);
+	proc_handler_add(ph, "void save_with_offset(int offset_seconds)", save_replay_to_recording_with_offset_proc, stream);
 	proc_handler_add(ph, "void get_last_replay(out string path)", get_last_replay, stream);
 
 	signal_handler_t *sh = obs_output_get_signal_handler(output);
