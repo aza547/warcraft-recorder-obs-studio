@@ -1219,8 +1219,13 @@ static void replay_to_recording_save_with_offset(struct ffmpeg_muxer *stream, in
 		if (pkt->type == OBS_ENCODER_VIDEO) {
 			if (!found_video) {
         found_video = true;
-				video_pts_offset = video_pts_offset = pkt->pts;
+				video_pts_offset = pkt->pts;
 				video_offset = video_pts_offset * 1000000 / pkt->timebase_den;
+        
+				// STORE for continuous recording timestamp adjustment
+				stream->video_offset = video_offset;
+				stream->video_pts_offset_stored = video_pts_offset;
+        
         info("Calculated video offset: %ld usec", video_offset);
 			}
 		} else {
@@ -1228,6 +1233,11 @@ static void replay_to_recording_save_with_offset(struct ffmpeg_muxer *stream, in
 				found_audio[pkt->track_idx] = true;
 				audio_offsets[pkt->track_idx] = pkt->dts_usec;
 				audio_dts_offsets[pkt->track_idx] = pkt->dts;
+        
+				// STORE for continuous recording timestamp adjustment
+				stream->audio_offsets[pkt->track_idx] = audio_offsets[pkt->track_idx];
+				stream->audio_dts_offsets_stored[pkt->track_idx] = audio_dts_offsets[pkt->track_idx];
+        
         info("Calculated audio offset for track %d: %ld usec", pkt->track_idx, audio_offsets[pkt->track_idx]);
 			}
 		}
@@ -1296,6 +1306,18 @@ static void *replay_to_recording_mux_thread(void *data)
 	while (stream->continuous_packets.size > 0) {
 		struct encoder_packet pkt;
 		deque_pop_front(&stream->continuous_packets, &pkt, sizeof(pkt));
+		
+		// Apply timestamp adjustments to buffered packets too
+		if (pkt.type == OBS_ENCODER_VIDEO) {
+			pkt.dts_usec -= stream->video_offset;
+			pkt.dts -= stream->video_pts_offset_stored;
+			pkt.pts -= stream->video_pts_offset_stored;
+		} else {
+			pkt.dts_usec -= stream->audio_offsets[pkt.track_idx];
+			pkt.dts -= stream->audio_dts_offsets_stored[pkt.track_idx];
+			pkt.pts -= stream->audio_dts_offsets_stored[pkt.track_idx];
+		}
+		
 		if (!write_packet(stream, &pkt)) {
 			warn("Could not write continuous packet for file '%s'", stream->path.array);
 			error = true;
@@ -1523,33 +1545,40 @@ static void replay_to_recording_data(void *data, struct encoder_packet *packet)
 		break;
 
 	case REPLAY_TO_REC_CONTINUOUS:
-		// Direct write to continuous recording file
-
-    // info("write packet continuous");
+		// Direct write to continuous recording file with timestamp adjustment
 
 		if (!stream->pipe) {
       warn("failed to get pipe");
-    }
-
-    if (!write_packet(stream, packet)) {
-      warn("Failed to write packet during continuous recording");
       deactivate_replay_buffer(stream, OBS_OUTPUT_ENCODE_ERROR);
       return;
-		}
-		
-		// // Check if we've reached the continuous recording duration limit
-		// if (stream->continuous_duration_sec > 0) {
-		// 	uint64_t elapsed = (packet->sys_dts_usec - stream->continuous_start_ts) / 1000000LL;
-		// 	if (elapsed >= stream->continuous_duration_sec) {
-		// 		// Stop continuous recording
-		// 		info("Continuous recording duration reached, stopping. %d %d", elapsed, stream->continuous_duration_sec);
-    //     stream->stop_ts = packet->sys_dts_usec;
-    //     os_atomic_set_bool(&stream->stopping, true);
-    //     os_atomic_set_bool(&stream->capturing, false);
-		// 		deactivate_replay_buffer(stream, 0);
-		// 		return;
-		// 	}
-		// }
+    }
+
+    // Create a copy with adjusted timestamps to maintain continuity
+    struct encoder_packet adjusted_pkt;
+    obs_encoder_packet_ref(&adjusted_pkt, packet);
+    
+    // Apply the same timestamp adjustments that were used in the replay portion
+    if (adjusted_pkt.type == OBS_ENCODER_VIDEO) {
+        // Use the video offset calculated during replay save
+        adjusted_pkt.dts_usec -= stream->video_offset;
+        adjusted_pkt.dts -= stream->video_pts_offset_stored;
+        adjusted_pkt.pts -= stream->video_pts_offset_stored;
+        info("Adjusted video packet: original_dts=%ld, adjusted_dts=%ld", packet->dts_usec, adjusted_pkt.dts_usec);
+    } else {
+        // Use the audio offset for this track
+        adjusted_pkt.dts_usec -= stream->audio_offsets[adjusted_pkt.track_idx];
+        adjusted_pkt.dts -= stream->audio_dts_offsets_stored[adjusted_pkt.track_idx];
+        adjusted_pkt.pts -= stream->audio_dts_offsets_stored[adjusted_pkt.track_idx];
+    }
+
+    if (!write_packet(stream, &adjusted_pkt)) {
+      warn("Failed to write packet during continuous recording");
+      obs_encoder_packet_release(&adjusted_pkt);
+      deactivate_replay_buffer(stream, OBS_OUTPUT_ENCODE_ERROR);
+      return;
+    }
+    
+    obs_encoder_packet_release(&adjusted_pkt);
 		break;
 	}
 }
