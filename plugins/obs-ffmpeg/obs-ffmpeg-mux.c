@@ -74,9 +74,8 @@ static inline void replay_to_recording_clear(struct ffmpeg_muxer *stream)
 	deque_free(&stream->continuous_packets);
 	stream->replay_to_recording_mode = false;
 	stream->replay_start_offset_sec = 0;
-	stream->continuous_start_ts = 0;
 	stream->transitioning_to_continuous = false;
-	stream->replay_to_rec_state = REPLAY_TO_REC_BUFFERING;
+	stream->replay_to_rec_state = REPLAY_TO_REC_MEMORY;
 }
 
 static void ffmpeg_mux_destroy(void *data)
@@ -1192,9 +1191,8 @@ static void *replay_to_recording_mux_thread(void *data)
 	info("Wrote replay portion to '%s', transitioning to continuous recording", stream->path.array);
 
 	// Transition to continuous recording
-	stream->replay_to_rec_state = REPLAY_TO_REC_CONTINUOUS;
-  info("state set to REPLAY_TO_REC_CONTINUOUS");
-	stream->continuous_start_ts = os_gettime_ns() / 1000LL;
+	stream->replay_to_rec_state = REPLAY_TO_REC_DISK;
+  info("state set to REPLAY_TO_REC_DISK");
 	
 	// Write any buffered packets from during the replay save
 	while (stream->continuous_packets.size > 0) {
@@ -1238,8 +1236,8 @@ error:
 	}
 	da_free(stream->mux_packets);
 	os_atomic_set_bool(&stream->muxing, false);
-  info("state set to REPLAY_TO_REC_BUFFERING");
-	stream->replay_to_rec_state = REPLAY_TO_REC_BUFFERING;
+  info("state set to REPLAY_TO_REC_MEMORY");
+	stream->replay_to_rec_state = REPLAY_TO_REC_MEMORY;
 
 	return NULL;
 }
@@ -1348,15 +1346,15 @@ static void replay_to_recording_save_with_offset(struct ffmpeg_muxer *stream, in
     generate_filename(stream, &stream->path, true);
 
 	// Set state for replay-to-recording transition
-  info("state set to REPLAY_TO_REC_SAVING_REPLAY");
-	stream->replay_to_rec_state = REPLAY_TO_REC_SAVING_REPLAY;
+  info("state set to REPLAY_TO_REC_CONVERTING");
+	stream->replay_to_rec_state = REPLAY_TO_REC_CONVERTING;
 	os_atomic_set_bool(&stream->muxing, true);
 	stream->mux_thread_joinable = pthread_create(&stream->mux_thread, NULL, replay_to_recording_mux_thread, stream) == 0;
 	if (!stream->mux_thread_joinable) {
 		warn("Failed to create muxer thread");
 		os_atomic_set_bool(&stream->muxing, false);
-    info("state set to REPLAY_TO_REC_BUFFERING");
-		stream->replay_to_rec_state = REPLAY_TO_REC_BUFFERING;
+    info("state set to REPLAY_TO_REC_MEMORY");
+		stream->replay_to_rec_state = REPLAY_TO_REC_MEMORY;
 	}
 }
 
@@ -1414,7 +1412,7 @@ static void deactivate_replay_buffer(struct ffmpeg_muxer *stream, int code)
   info("enter deactivate_replay_buffer");
 
   // Handle replay-to-recording mode specially
-  if (stream->replay_to_recording_mode && stream->replay_to_rec_state == REPLAY_TO_REC_CONTINUOUS) {
+  if (stream->replay_to_recording_mode && stream->replay_to_rec_state == REPLAY_TO_REC_DISK) {
       info("stopping continuous recording, closing pipe properly");
       
       // Close the pipe properly to finalize the MP4 file
@@ -1523,7 +1521,7 @@ static void replay_to_recording_data(void *data, struct encoder_packet *packet)
 	obs_encoder_packet_ref(&pkt, packet);
 
 	switch (stream->replay_to_rec_state) {
-	case REPLAY_TO_REC_BUFFERING:
+	case REPLAY_TO_REC_MEMORY:
 		// Normal replay buffer behavior
 		replay_buffer_purge(stream, &pkt);
 
@@ -1550,12 +1548,12 @@ static void replay_to_recording_data(void *data, struct encoder_packet *packet)
 		}
 		break;
 
-	case REPLAY_TO_REC_SAVING_REPLAY:
+	case REPLAY_TO_REC_CONVERTING:
 		// During replay save, buffer new packets for continuous recording
 		deque_push_back(&stream->continuous_packets, packet, sizeof(*packet));
 		break;
 
-	case REPLAY_TO_REC_CONTINUOUS:
+	case REPLAY_TO_REC_DISK:
 		// Direct write to continuous recording file with timestamp adjustment
 
 		if (!stream->pipe) {
@@ -1661,7 +1659,7 @@ static void *replay_to_recording_create(obs_data_t *settings, obs_output_t *outp
 	struct ffmpeg_muxer *stream = bzalloc(sizeof(*stream));
 	stream->output = output;
 	stream->replay_to_recording_mode = true;
-	stream->replay_to_rec_state = REPLAY_TO_REC_BUFFERING;
+	stream->replay_to_rec_state = REPLAY_TO_REC_MEMORY;
 	stream->replay_start_offset_sec = 0;
 
 	stream->hotkey = obs_hotkey_register_output(output, "ReplayToRecording.Save", 
@@ -1703,7 +1701,7 @@ static bool replay_to_recording_start(void *data)
 	// stream->continuous_duration_sec = (int)obs_data_get_int(s, "continuous_duration_sec");
 	obs_data_release(s);
 
-	stream->replay_to_rec_state = REPLAY_TO_REC_BUFFERING;
+	stream->replay_to_rec_state = REPLAY_TO_REC_MEMORY;
 	os_atomic_set_bool(&stream->active, true);
 	os_atomic_set_bool(&stream->capturing, true);
 	stream->total_bytes = 0;

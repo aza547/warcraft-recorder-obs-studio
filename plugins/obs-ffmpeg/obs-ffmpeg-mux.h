@@ -38,16 +38,16 @@ struct ffmpeg_muxer {
 	volatile bool muxing;
 	mux_packets_t mux_packets;
 
-	/* replay-to-recording */
+	/* replay buffer to recording */
 	bool replay_to_recording_mode;
 	int replay_start_offset_sec;
-	uint64_t continuous_start_ts;
 	bool transitioning_to_continuous;
 	struct deque continuous_packets;
+
 	enum {
-		REPLAY_TO_REC_BUFFERING,
-		REPLAY_TO_REC_SAVING_REPLAY,
-		REPLAY_TO_REC_CONTINUOUS
+		REPLAY_TO_REC_MEMORY, // recording to memory buffer
+		REPLAY_TO_REC_CONVERTING, // converting memory buffer to file
+		REPLAY_TO_REC_DISK // saving to disk
 	} replay_to_rec_state;
 
 	/* handy variables for timestamp adjustments */
@@ -55,6 +55,8 @@ struct ffmpeg_muxer {
 	bool found_audio[MAX_AUDIO_MIXES];
 	int64_t video_pts_offset;
 	int64_t audio_dts_offsets[MAX_AUDIO_MIXES];
+
+	/* split file */
 	bool split_file_ready;
 	volatile bool manual_split;
 
