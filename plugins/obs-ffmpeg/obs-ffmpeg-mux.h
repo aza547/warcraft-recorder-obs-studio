@@ -39,13 +39,14 @@ struct ffmpeg_muxer {
 	mux_packets_t mux_packets;
 
 	/* replay buffer to recording */
+  bool replay_to_rec;
 	int replay_start_offset_sec;
 	struct deque continuous_packets;
 
 	enum {
-		MEMORY, // recording to memory buffer
-		TRANSITIONING, // converting memory buffer to file
-		DISK // now saving to disk
+		BUFFERING, // recording to memory buffer
+		CONVERTING, // converting memory buffer to file
+		WRITING // now saving to disk
 	} replay_to_rec_state;
 
 	/* handy variables for timestamp adjustments */
