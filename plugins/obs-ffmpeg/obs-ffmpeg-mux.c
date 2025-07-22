@@ -955,19 +955,19 @@ static void save_replay_proc(void *data, calldata_t *cd)
 /* converts a replay buffer into a recording to disk */
 static void convert_replay_to_recording_with_offset_proc(void *data, calldata_t *cd)
 {
-  struct ffmpeg_muxer *stream = data;
+	struct ffmpeg_muxer *stream = data;
 
-  if (stream->replay_to_rec_state != BUFFERING) {
-    warn("Cannot convert replay buffer while not in BUFFERING state");
-    return;
-  }
+	if (stream->replay_to_rec_state != BUFFERING) {
+		warn("Cannot convert replay buffer while not in BUFFERING state");
+		return;
+	}
 
-  int offset_seconds = (int)calldata_int(cd, "offset_seconds");
+	int offset_seconds = (int)calldata_int(cd, "offset_seconds");
 	info("Converting replay to recording with offset_seconds: %d", offset_seconds);
 
-  stream->replay_to_rec = true;
-  stream->convert_offset_sec = offset_seconds;
-  save_replay_proc(data, cd);
+	stream->replay_to_rec = true;
+	stream->convert_offset_sec = offset_seconds;
+	save_replay_proc(data, cd);
 }
 
 static void get_last_replay(void *data, calldata_t *cd)
@@ -1335,17 +1335,16 @@ static void replay_to_recording_save_with_offset(struct ffmpeg_muxer *stream, in
 		);
 	}
 
-    generate_filename(stream, &stream->path, true);
+	generate_filename(stream, &stream->path, true);
 
-  info("State is now: CONVERTING");
+	info("State is now: CONVERTING");
 	stream->replay_to_rec_state = CONVERTING;
 
-  os_atomic_set_bool(&stream->muxing, true);
+	os_atomic_set_bool(&stream->muxing, true);
 
 	stream->mux_thread_joinable = 
 		pthread_create(&stream->mux_thread, NULL, replay_to_recording_mux_thread, stream) == 0;
-
-  if (!stream->mux_thread_joinable) {
+	if (!stream->mux_thread_joinable) {
 		warn("Failed to create muxer thread");
 		os_atomic_set_bool(&stream->muxing, false);
 		stream->replay_to_rec_state = BUFFERING;
@@ -1403,28 +1402,29 @@ static void replay_buffer_save(struct ffmpeg_muxer *stream)
 
 static void deactivate_replay_buffer(struct ffmpeg_muxer *stream, int code)
 {
-  // Handle continuous recording state specially
-  if (stream->replay_to_rec_state == WRITING) {
-      info("stopping continuous recording, closing pipe properly");
-      
-      // Close the pipe properly to finalize the MP4 file
-      if (stream->pipe) {
-          os_process_pipe_destroy(stream->pipe);
-          stream->pipe = NULL;
-      }
-      
-      // Wait for any ongoing mux thread to complete
-      if (stream->mux_thread_joinable) {
-          pthread_join(stream->mux_thread, NULL);
-          stream->mux_thread_joinable = false;
-      }
-  }
-  
+	// Handle continuous recording state specially
+	if (stream->replay_to_rec_state == WRITING) {
+		info("stopping continuous recording, closing pipe properly");
+
+		// Close the pipe properly to finalize the MP4 file
+		if (stream->pipe) {
+			os_process_pipe_destroy(stream->pipe);
+			stream->pipe = NULL;
+		}
+
+	// Wait for any ongoing mux thread to complete
+		if (stream->mux_thread_joinable) {
+			pthread_join(stream->mux_thread, NULL);
+			stream->mux_thread_joinable = false;
+		}
+	}
+
 	if (code) {
 		obs_output_signal_stop(stream->output, code);
 	} else if (stopping(stream)) {
 		obs_output_end_data_capture(stream->output);
 	}
+
 	os_atomic_set_bool(&stream->active, false);
 	os_atomic_set_bool(&stream->sent_headers, false);
 	os_atomic_set_bool(&stream->stopping, false);
