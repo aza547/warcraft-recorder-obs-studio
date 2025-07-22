@@ -40,7 +40,6 @@ struct ffmpeg_muxer {
 
 	/* replay buffer to recording */
 	int replay_start_offset_sec;
-	bool transitioning_to_continuous;
 	struct deque continuous_packets;
 
 	enum {

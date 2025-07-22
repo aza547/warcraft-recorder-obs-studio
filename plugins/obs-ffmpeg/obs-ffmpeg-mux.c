@@ -69,7 +69,6 @@ static inline void replay_buffer_clear(struct ffmpeg_muxer *stream)
 	stream->save_ts = 0;
 	stream->keyframes = 0;
 	stream->replay_start_offset_sec = 0;
-	stream->transitioning_to_continuous = false;
 	stream->replay_to_rec_state = MEMORY;
 }
 
@@ -953,9 +952,16 @@ static void save_replay_proc(void *data, calldata_t *cd)
 	UNUSED_PARAMETER(cd);
 }
 
-static void save_replay_to_recording_with_offset_proc(void *data, calldata_t *cd)
+/* converts a replay buffer into a recording to disk */
+static void convert_replay_to_recording_with_offset_proc(void *data, calldata_t *cd)
 {
   struct ffmpeg_muxer *stream = data;
+
+  if (stream->replay_to_rec_state != MEMORY) {
+    warn("Cannot convert replay buffer to recording while not in memory state");
+    return;
+  }
+
   int offset_seconds = (int)calldata_int(cd, "offset_seconds");
   stream->replay_start_offset_sec = offset_seconds;
   info("Got offset_seconds: %d", offset_seconds);
@@ -980,7 +986,7 @@ static void *replay_buffer_create(obs_data_t *settings, obs_output_t *output)
 
 	proc_handler_t *ph = obs_output_get_proc_handler(output);
 	proc_handler_add(ph, "void save()", save_replay_proc, stream);
-	proc_handler_add(ph, "void save_with_offset(int offset_seconds)", save_replay_to_recording_with_offset_proc, stream);
+	proc_handler_add(ph, "void transition(int offset_seconds)", convert_replay_to_recording_with_offset_proc, stream);
 	proc_handler_add(ph, "void get_last_replay(out string path)", get_last_replay, stream);
 
 	signal_handler_t *sh = obs_output_get_signal_handler(output);
