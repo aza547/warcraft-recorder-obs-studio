@@ -54,12 +54,12 @@ static inline void replay_buffer_clear(struct ffmpeg_muxer *stream)
 
 	deque_free(&stream->packets);
 	
-	// Clear continuous packets if they exist
 	while (stream->continuous_packets.size > 0) {
 		struct encoder_packet pkt;
 		deque_pop_front(&stream->continuous_packets, &pkt, sizeof(pkt));
 		obs_encoder_packet_release(&pkt);
 	}
+
 	deque_free(&stream->continuous_packets);
 	
 	stream->cur_size = 0;
@@ -963,9 +963,10 @@ static void convert_replay_to_recording_with_offset_proc(void *data, calldata_t 
   }
 
   int offset_seconds = (int)calldata_int(cd, "offset_seconds");
+	info("Converting replay to recording with offset_seconds: %d", offset_seconds);
+
   stream->replay_to_rec = true;
   stream->convert_offset_sec = offset_seconds;
-  info("Got offset_seconds: %d", offset_seconds);
   save_replay_proc(data, cd);
 }
 
@@ -1200,7 +1201,6 @@ static void *replay_to_recording_mux_thread(void *data)
 		obs_encoder_packet_release(pkt);
 	}
 
-  info("State set to WRITING");
 	stream->replay_to_rec_state = WRITING;
 	
 	// Write any extra packets that have appeared in the meantime.
@@ -1236,13 +1236,14 @@ static void *replay_to_recording_mux_thread(void *data)
 error:
 	os_process_pipe_destroy(stream->pipe);
 	stream->pipe = NULL;
+
 	if (error) {
 		for (size_t i = 0; i < stream->mux_packets.num; i++)
 			obs_encoder_packet_release(&stream->mux_packets.array[i]);
 	}
+
 	da_free(stream->mux_packets);
 	os_atomic_set_bool(&stream->muxing, false);
-  info("state set to BUFFERING");
 	stream->replay_to_rec_state = BUFFERING;
 
 	return NULL;
@@ -1258,29 +1259,29 @@ static void replay_to_recording_save_with_offset(struct ffmpeg_muxer *stream, in
 		return;
 	}
 	
-	// Calculate how many packets to skip based on offset
+	// Calculate how many packets to skip based on offset provided
 	size_t skip_packets = 0;
+
 	if (offset_seconds > 0) {
 		int64_t target_time = (int64_t)offset_seconds * 1000000LL;
-    info("target time %lld usec", target_time);
+		info("target time %lld usec", target_time);
 		
-		// Find the nearest keyframe (search both forward and backward)
+		// Find the nearest keyframe
 		size_t best_keyframe_idx = 0;
 		int64_t best_time_diff = INT64_MAX;
 		bool found_keyframe = false;
 		
 		for (size_t i = 0; i < num_packets; i++) {
 			struct encoder_packet *pkt = deque_data(&stream->packets, i * size);
-			// const char *type_str = (pkt->type == OBS_ENCODER_VIDEO) ? "video" : "audio";
-			// info("Checking packet %zu: Type: %s Keyframe: %d DTS: %ld", i, type_str, pkt->keyframe, pkt->dts_usec);
+			bool video = pkt->type == OBS_ENCODER_VIDEO;
 
-			if (pkt->type == OBS_ENCODER_VIDEO && pkt->keyframe) {
+			if (video && pkt->keyframe) {
 				int64_t time_diff = llabs((int64_t)pkt->dts_usec - target_time);
+
 				if (time_diff < best_time_diff) {
 					best_time_diff = time_diff;
 					best_keyframe_idx = i;
 					found_keyframe = true;
-					// info("Found better keyframe at packet %zu: time_diff=%lld usec", i, time_diff);
 				}
 			}
 		}
@@ -1288,19 +1289,17 @@ static void replay_to_recording_save_with_offset(struct ffmpeg_muxer *stream, in
 		if (found_keyframe) {
 			skip_packets = best_keyframe_idx;
 			struct encoder_packet *best_pkt = deque_data(&stream->packets, best_keyframe_idx * size);
-			info("Selected nearest keyframe at packet %zu: DTS=%ld, time_diff=%lld usec", 
-				 best_keyframe_idx, best_pkt->dts_usec, best_time_diff);
 		} else {
-			info("No keyframes found, starting from beginning");
+			warn("No keyframes found, starting from beginning");
 		}
 	}
 	
 	size_t packets_to_save = num_packets - skip_packets;
+
 	if (packets_to_save == 0) {
 		warn("Offset too large, no packets to save");
 		return;
 	}
-  info("packets_to_save %zu", packets_to_save);
 	
 	da_reserve(stream->mux_packets, packets_to_save);
 
@@ -1404,8 +1403,6 @@ static void replay_buffer_save(struct ffmpeg_muxer *stream)
 
 static void deactivate_replay_buffer(struct ffmpeg_muxer *stream, int code)
 {
-  info("enter deactivate_replay_buffer");
-
   // Handle continuous recording state specially
   if (stream->replay_to_rec_state == WRITING) {
       info("stopping continuous recording, closing pipe properly");
@@ -1537,7 +1534,7 @@ static void replay_buffer_defaults(obs_data_t *s)
 	obs_data_set_default_string(s, "format", "%CCYY-%MM-%DD %hh-%mm-%ss");
 	obs_data_set_default_string(s, "extension", "mp4");
 	obs_data_set_default_bool(s, "allow_spaces", true);
-  obs_data_set_default_bool(s, "replay_to_rec", false);
+	obs_data_set_default_bool(s, "replay_to_rec", false);
 }
 
 struct obs_output_info replay_buffer = {

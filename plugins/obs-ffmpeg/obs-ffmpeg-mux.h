@@ -46,7 +46,7 @@ struct ffmpeg_muxer {
 	enum {
 		BUFFERING,  // recording to memory buffer
 		CONVERTING, // converting memory buffer to file
-		WRITING     // now saving to disk
+		WRITING     // saving to file
 	} replay_to_rec_state;
 
 	/* handy variables for timestamp adjustments */
