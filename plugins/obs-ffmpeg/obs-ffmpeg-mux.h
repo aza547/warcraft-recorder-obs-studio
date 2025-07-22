@@ -44,9 +44,9 @@ struct ffmpeg_muxer {
 	struct deque continuous_packets;
 
 	enum {
-		REPLAY_TO_REC_MEMORY, // recording to memory buffer
-		REPLAY_TO_REC_CONVERTING, // converting memory buffer to file
-		REPLAY_TO_REC_DISK // saving to disk
+		MEMORY, // recording to memory buffer
+		TRANSITIONING, // converting memory buffer to file
+		DISK // now saving to disk
 	} replay_to_rec_state;
 
 	/* handy variables for timestamp adjustments */
