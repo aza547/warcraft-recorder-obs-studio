@@ -24,6 +24,8 @@
 
 #include <libavformat/avformat.h>
 
+#define MAXPATH 260
+
 #define do_log(level, format, ...) \
 	blog(level, "[ffmpeg muxer: '%s'] " format, obs_output_get_name(stream->output), ##__VA_ARGS__)
 
@@ -291,6 +293,15 @@ static void build_command_line(struct ffmpeg_muxer *stream, os_process_args_t **
 	}
 
 	char *exe = os_get_executable_path_ptr(FFMPEG_MUX);
+
+  if (!os_file_exists(exe)) {
+		blog(LOG_WARNING, "Did not find FFMPEG_MUX exe, will try working dir");
+		char cwd[MAXPATH];
+		os_getcwd(cwd, MAXPATH);
+		blog(LOG_WARNING, "Working directory: %s", cwd);
+		snprintf(exe, MAXPATH, "%s/bin/64bit/%s", cwd, FFMPEG_MUX);
+	}
+
 	*args = os_process_args_create(exe);
 	bfree(exe);
 
@@ -1023,6 +1034,7 @@ static bool replay_buffer_start(void *data)
 	stream->replay_to_rec_state = BUFFERING;
 	os_atomic_set_bool(&stream->active, true);
 	os_atomic_set_bool(&stream->capturing, true);
+  os_atomic_set_bool(&stream->muxing, false);
 	stream->total_bytes = 0;
 	obs_output_begin_data_capture(stream->output, 0);
 
@@ -1177,7 +1189,7 @@ static void *replay_to_recording_mux_thread(void *data)
 	start_pipe(stream, stream->path.array);
 
 	if (!stream->pipe) {
-		warn("Failed to create process pipe");
+		warn("Failed to create process pipe: %s", stream->path.array);
 		error = true;
 		goto error;
 	}
@@ -1480,8 +1492,10 @@ static void replay_buffer_data(void *data, struct encoder_packet *packet)
 				stream->save_ts = 0;
 				
 				if (stream->replay_to_rec) {
+          info("Converting replay buffer");
 					replay_to_recording_save_with_offset(stream, stream->convert_offset_sec);
 				} else {
+          info("Saving replay buffer");
 					replay_buffer_save(stream);
 				}
 			}
