@@ -1034,7 +1034,6 @@ static bool replay_buffer_start(void *data)
 	stream->replay_to_rec_state = BUFFERING;
 	os_atomic_set_bool(&stream->active, true);
 	os_atomic_set_bool(&stream->capturing, true);
-  os_atomic_set_bool(&stream->muxing, false);
 	stream->total_bytes = 0;
 	obs_output_begin_data_capture(stream->output, 0);
 
@@ -1440,6 +1439,7 @@ static void deactivate_replay_buffer(struct ffmpeg_muxer *stream, int code)
 	os_atomic_set_bool(&stream->active, false);
 	os_atomic_set_bool(&stream->sent_headers, false);
 	os_atomic_set_bool(&stream->stopping, false);
+  os_atomic_set_bool(&stream->muxing, false);
 
 	replay_buffer_clear(stream);
 }
