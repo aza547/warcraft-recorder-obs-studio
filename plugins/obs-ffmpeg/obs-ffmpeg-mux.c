@@ -1270,41 +1270,48 @@ static void replay_to_recording_save_with_offset(struct ffmpeg_muxer *stream, in
 		return;
 	}
 	
-	// Calculate how many packets to skip based on offset provided
+	// Calculate how many packets to skip based on offset from END of buffer
 	size_t skip_packets = 0;
 
-	if (offset_seconds > 0) {
-		int64_t target_time = (int64_t)offset_seconds * 1000000LL;
-		info("target time %lld usec", target_time);
-		
-		// Find the nearest keyframe
-		size_t best_keyframe_idx = 0;
-		int64_t best_time_diff = INT64_MAX;
-		bool found_keyframe = false;
-		
-		for (size_t i = 0; i < num_packets; i++) {
-			struct encoder_packet *pkt = deque_data(&stream->packets, i * size);
-			bool video = pkt->type == OBS_ENCODER_VIDEO;
+  // Get the timestamp of the last packet (end of buffer)
+  struct encoder_packet *last_pkt = deque_data(&stream->packets, (num_packets - 1) * size);
+  int64_t end_time = last_pkt->dts_usec;
+  
+  // Calculate target time as offset BACK from the end
+  int64_t target_time = end_time - ((int64_t)offset_seconds * 1000000LL);
+  info("end_time %lld usec, target_time %lld usec (offset back %d seconds)", 
+      end_time, target_time, offset_seconds);
+  
+  // Find the nearest keyframe to our target time
+  size_t best_keyframe_idx = 0;
+  int64_t best_time_diff = INT64_MAX;
+  bool found_keyframe = false;
+  
+  for (size_t i = 0; i < num_packets; i++) {
+    struct encoder_packet *pkt = deque_data(&stream->packets, i * size);
+    bool video = pkt->type == OBS_ENCODER_VIDEO;
 
-			if (video && pkt->keyframe) {
-				int64_t time_diff = llabs((int64_t)pkt->dts_usec - target_time);
+    if (video && pkt->keyframe) {
+      int64_t time_diff = llabs((int64_t)pkt->dts_usec - target_time);
 
-				if (time_diff < best_time_diff) {
-					best_time_diff = time_diff;
-					best_keyframe_idx = i;
-					found_keyframe = true;
-				}
-			}
-		}
-		
-		if (found_keyframe) {
-			skip_packets = best_keyframe_idx;
-			struct encoder_packet *best_pkt = deque_data(&stream->packets, best_keyframe_idx * size);
-		} else {
-			warn("No keyframes found, starting from beginning");
-		}
-	}
-	
+      if (time_diff < best_time_diff) {
+        best_time_diff = time_diff;
+        best_keyframe_idx = i;
+        found_keyframe = true;
+      }
+    }
+  }
+  
+  if (found_keyframe) {
+    skip_packets = best_keyframe_idx;
+    struct encoder_packet *best_pkt = deque_data(&stream->packets, best_keyframe_idx * size);
+    info("Selected keyframe at packet %zu: DTS=%ld (%.1f seconds from end)", 
+        best_keyframe_idx, best_pkt->dts_usec, 
+        (double)(end_time - best_pkt->dts_usec) / 1000000.0);
+  } else {
+    warn("No keyframes found after target time, starting from beginning");
+  }
+
 	size_t packets_to_save = num_packets - skip_packets;
 
 	if (packets_to_save == 0) {
