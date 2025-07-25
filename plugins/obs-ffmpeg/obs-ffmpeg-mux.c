@@ -295,11 +295,8 @@ static void build_command_line(struct ffmpeg_muxer *stream, os_process_args_t **
 	char *exe = os_get_executable_path_ptr(FFMPEG_MUX);
 
   if (!os_file_exists(exe)) {
-		blog(LOG_WARNING, "Did not find FFMPEG_MUX exe, will try working dir");
-		char cwd[MAXPATH];
-		os_getcwd(cwd, MAXPATH);
-		blog(LOG_WARNING, "Working directory: %s", cwd);
-		snprintf(exe, MAXPATH, "%s/bin/64bit/%s", cwd, FFMPEG_MUX);
+		blog(LOG_WARNING, "Did not find FFMPEG_MUX exe, fallback to PATH search");
+    exe = FFMPEG_MUX;
 	}
 
 	*args = os_process_args_create(exe);
@@ -1325,6 +1322,7 @@ static void replay_to_recording_save_with_offset(struct ffmpeg_muxer *stream, in
 	/* reorder packets */
 	int64_t video_offset = 0;
 	int64_t audio_offsets[MAX_AUDIO_MIXES] = {0};
+  ts_offset_clear(stream); // crucial else we might have stale offsets from a previous use
 
 	for (size_t i = skip_packets; i < num_packets; i++) {
 		struct encoder_packet *pkt;
@@ -1541,7 +1539,7 @@ static void replay_buffer_data(void *data, struct encoder_packet *packet)
 			deactivate_replay_buffer(stream, OBS_OUTPUT_ENCODE_ERROR);
 			return;
 		}
-		
+
 		obs_encoder_packet_release(&pkt);
 		break;
 	}

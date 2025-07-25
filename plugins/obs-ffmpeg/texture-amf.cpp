@@ -2411,15 +2411,12 @@ try {
 
 	/* ----------------------------------- */
 	/* Check for supported codecs          */
-	char* exe = os_get_executable_path_ptr("obs-amf-test.exe");
+	const char* exe = os_get_executable_path_ptr("obs-amf-test.exe");
 	bool exists = std::filesystem::exists(exe);
 
 	if (!exists) {
-		blog(LOG_INFO, "Did not find AMF test exe, will try working dir");
-		char cwd[MAX_PATH];
-		os_getcwd(cwd, MAX_PATH);
-		blog(LOG_INFO, "Working directory: %s", cwd);
-		snprintf(exe, MAX_PATH, "%s/bin/64bit/obs-amf-test.exe", cwd);
+		blog(LOG_INFO, "Did not find AMF test exe, fallback to PATH search");
+    exe = "obs-amf-test.exe";
 	}
 
 	BPtr<char> test_exe = bstrdup(exe);
