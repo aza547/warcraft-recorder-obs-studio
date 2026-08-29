@@ -1370,12 +1370,15 @@ static void replay_to_recording_save_with_offset(struct ffmpeg_muxer *stream, in
 			      stream->audio_dts_offsets);
 	}
 
+	// Set muxing before touching stream->path: get_last_replay() only reads
+	// stream->path when !muxing, so it must not be possible to observe it
+	// mid-mutation from generate_filename() below.
+	os_atomic_set_bool(&stream->muxing, true);
+
 	generate_filename(stream, &stream->path, true);
 
 	info("State is now: CONVERTING");
 	stream->replay_to_rec_state = CONVERTING;
-
-	os_atomic_set_bool(&stream->muxing, true);
 
 	stream->mux_thread_joinable =
 		pthread_create(&stream->mux_thread, NULL, replay_to_recording_mux_thread, stream) == 0;
@@ -1426,9 +1429,13 @@ static void replay_buffer_save(struct ffmpeg_muxer *stream)
 			      audio_dts_offsets);
 	}
 
+	// Set muxing before touching stream->path: get_last_replay() only reads
+	// stream->path when !muxing, so it must not be possible to observe it
+	// mid-mutation from generate_filename() below.
+	os_atomic_set_bool(&stream->muxing, true);
+
 	generate_filename(stream, &stream->path, true);
 
-	os_atomic_set_bool(&stream->muxing, true);
 	stream->mux_thread_joinable = pthread_create(&stream->mux_thread, NULL, replay_buffer_mux_thread, stream) == 0;
 	if (!stream->mux_thread_joinable) {
 		warn("Failed to create muxer thread");
@@ -1438,6 +1445,14 @@ static void replay_buffer_save(struct ffmpeg_muxer *stream)
 
 static void deactivate_replay_buffer(struct ffmpeg_muxer *stream, int code)
 {
+	// write_packet() (shared with the plain ffmpeg_muxer/HLS outputs) calls
+	// signal_failure() -> deactivate() on a pipe write failure, which already
+	// flips active to false. replay_buffer_data() calls us again right after
+	// write_packet() fails, unaware that already happened, so guard against
+	// redoing teardown (and re-signaling stop) a second time.
+	if (!active(stream))
+		return;
+
 	// Wait for any outstanding mux thread (plain save, or a replay-to-recording
 	// conversion in either the CONVERTING or WRITING phase) to fully finish
 	// before we touch stream->pipe/continuous_packets/path below - those may
