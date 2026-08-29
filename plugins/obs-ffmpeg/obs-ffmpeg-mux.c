@@ -1450,8 +1450,10 @@ static void deactivate_replay_buffer(struct ffmpeg_muxer *stream, int code)
 	// flips active to false. replay_buffer_data() calls us again right after
 	// write_packet() fails, unaware that already happened, so guard against
 	// redoing teardown (and re-signaling stop) a second time.
-	if (!active(stream))
+	if (!active(stream)) {
+		warn("Attempted to deactivate replay buffer, but it is not active");
 		return;
+	}
 
 	// Wait for any outstanding mux thread (plain save, or a replay-to-recording
 	// conversion in either the CONVERTING or WRITING phase) to fully finish
@@ -1459,6 +1461,7 @@ static void deactivate_replay_buffer(struct ffmpeg_muxer *stream, int code)
 	// still be in use by that thread. Must join without holding replay_mutex,
 	// since the mux thread may need to acquire it to make progress and finish.
 	if (stream->mux_thread_joinable) {
+		info("Joining mux thread as part of replay buffer deactivation");
 		pthread_join(stream->mux_thread, NULL);
 		stream->mux_thread_joinable = false;
 	}
