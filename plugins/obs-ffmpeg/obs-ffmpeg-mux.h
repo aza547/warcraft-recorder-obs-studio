@@ -41,6 +41,11 @@ struct ffmpeg_muxer {
 	/* replay buffer to recording */
 	bool replay_to_rec;
 	int convert_offset_sec; /* seconds from start of replay buffer */
+
+	/* Duration (ms) of packets currently held in the in-memory replay
+	 * buffer. Written by the encoder thread in replay_buffer_data(), read
+	 * from arbitrary threads by the get_duration proc, hence atomic. */
+	volatile long buffered_ms;
 	struct deque continuous_packets;
 
 	enum {
