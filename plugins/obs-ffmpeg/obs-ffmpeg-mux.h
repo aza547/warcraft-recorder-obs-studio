@@ -44,8 +44,13 @@ struct ffmpeg_muxer {
 
 	/* Duration (ms) of packets currently held in the in-memory replay
 	 * buffer. Written by the encoder thread in replay_buffer_data(), read
-	 * from arbitrary threads by the get_duration proc, hence atomic. */
+	 * from arbitrary threads by the get_buffer_duration_sec proc, hence atomic. */
 	volatile long buffered_ms;
+
+	/* Size (MB) of packets currently held in the in-memory replay buffer.
+	 * Same threading model as buffered_ms. Stored in MB rather than bytes
+	 * as long is 32-bit on Windows. */
+	volatile long buffered_mb;
 	struct deque continuous_packets;
 
 	enum {
